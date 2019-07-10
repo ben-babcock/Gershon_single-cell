@@ -1,0 +1,1710 @@
+---
+title: "Computational Analysis Single cell RNA-seq"
+author: "Ben Babcock"
+date: "03/25/2019"
+output: html_document
+fig_width: 6 
+fig_height: 5 
+message: False
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Import Expression Matrix
+###Format Objects
+###Add MetaData
+```{r}
+source("~/SingleCell.Utilities.R")
+mice <- paste0("B", c(1:8, "9-1", "9-2", 14:15))
+seurats <- list()
+
+min.genes <- 10
+min.cells <- 0
+prep.Seurat <- function(i){
+  message('Starting with Sample ', i)
+  df <- fread(paste0('/pine/scr/s/e/seth96/BCL/', i, '/out/dge.txt'),
+              stringsAsFactors = F, 
+              data.table = F, sep = "\t", header = T)
+  rownames(df) <- df$GENE
+  df$GENE <- NULL
+  colnames(df) <- paste(as.character(i), colnames(df), sep="_")
+  dat <- CreateSeuratObject(counts = df,
+                                       min.cells = min.cells,
+                                       min.features = min.genes)
+  dat <- StashIdent(object = dat,
+                    save.name = "Replicate")
+  return(dat)
+}
+
+seurats <- lapply(mice, function(x) prep.Seurat(x))
+names(seurats) <- mice
+
+BCL <- MergeSeurat(seurats[['B1']], seurats[['B2']])
+for(mouse in mice[3:length(mice)]){
+  BCL <- MergeSeurat(BCL, seurats[[mouse]])
+}
+
+Treatment <- c("Vehicle", "Vehicle", "Vehicle", 
+               "Vehicle", "Vehicle",
+               "Vismodegib", "Vismodegib", "Vismodegib", 
+               "Vismodegib", "Vismodegib")
+Sex <- c("Female", "Female", "Male", "Male", "Male", 
+         "Male", "Female", "Female", "Male", "Female")
+Date <- c("July02", "July02", "July25", "July25", "August18", 
+          "July02", "July25", "July25", "August18", "August18")
+GT <- SetAllIdent(GT, "Replicate")
+GT@ident <- plyr::mapvalues(x = GT@ident, from = mice, to = Treatment)
+GT <- StashIdent(object = GT, save.name = 'Treatment')
+GT <- SetAllIdent(object = GT, id = "Replicate")
+GT@ident <- plyr::mapvalues(x = GT@ident, from = mice, to = Sex)
+GT <- StashIdent(object = GT, save.name = 'Sex')
+GT <- SetAllIdent(object = GT, id = "Replicate")
+GT@ident <- plyr::mapvalues(x = GT@ident, from = mice, to = Date)
+GT <- StashIdent(object = GT, save.name = 'Date')
+GT <- SetAllIdent(object = GT, id = "Replicate")
+```
+#Apply Data Quality Filters
+###(Many are data-set specific, owing to differing depths of sequence by library batch)
+```{r}
+mito.genes <- grep(pattern = "^mt-", x = rownames(GT@data), value = TRUE)
+percent.mito <- (Matrix::colSums(GT@raw.data[mito.genes,])/Matrix::colSums(GT@raw.data))*100
+GT <- AddMetaData(object = GT, metadata = percent.mito, col.name = "percent.mito")
+
+VlnPlot(object = GT, 
+        features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "Date")
+
+seurats <- list()
+
+seurats[['MB04']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(2500, 5000, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB04"))
+seurats[['MB05']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(2000, 4000, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB05"))
+seurats[['MB06']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(3000, 5000, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB06"))
+seurats[['MB07']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(2200, 4000, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB07"))
+seurats[['MB09']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(4000, 7500, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB09"))
+seurats[['MB10']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(3000, 7200, 5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB10"))
+seurats[['MB12']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(4000, 10000, 7.5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB12"))
+seurats[['MB13']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(4000, 10000, 7.5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB13"))
+seurats[['MB14']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(4000, 10000, 7.5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB14"))
+seurats[['MB15']] <- FilterCells(object = GT, 
+                  subset.names = c("nGene", "nUMI", "percent.mito"), 
+                  low.thresholds = c(500, 200, -Inf), 
+                  high.thresholds = c(4000, 10000, 7.5),
+                  cells.use = WhichCells(GT, subset.name = "Replicate",
+                                         accept.value = "MB15"))
+
+GT <- MergeSeurat(seurats[[mice[1]]], seurats[[mice[2]]])
+for(mouse in mice[3:length(mice)]){
+  GT <- MergeSeurat(GT, seurats[[mouse]])
+}
+
+VlnPlot(object = GT,group.by = "Date", features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3)
+```
+#Investigate Large Data Set by tSNE & Clusters
+
+```{r}
+# Data scaling is better done with the maximum number of cells - we keep all cells here.
+# Treatment-specific analyses will be performed following the text workflow following.
+#Save all raw data prior to filtering genes by number of cells detected
+GT@misc <- GT@raw.data
+#Filter genes by minimum number of cells with that transcript detected
+GT@raw.data  <- GT@raw.data[rowSums(GT@raw.data != 0) >= 30, ]
+#Follow Seurat HVG selection
+GT <- NormalizeData(GT)
+GT <- FindVariableGenes(GT, x.low.cutoff = 0.0125, 
+                        x.high.cutoff = 3, 
+                        y.cutoff = 0.5, 
+                        y.high.cutoff = Inf, 
+                        num.bin = 20)
+#Apply linear scaling & centering to data
+GT <- ScaleData(GT, vars.to.regress = 'nUMI')
+```
+###Seurat Workflow
+```{r}
+#Predict the number of significant PCs (Z-score variance > 2)
+GT.pca <- TestPCA(GT, do.return = T)
+GT <- RunPCA(GT, pcs.compute = 60, seed.use = 42, weight.by.var = T, rev.pca = F, use.imputed = F)
+#Find cluster populations & tSNE coordinates for visualization
+GT <- FindClusters(GT, dims.use = 1:10, resolution = 1, 
+                   k.param = 30, random.seed = 0)
+GT <- StashIdent(GT, "GTClust")
+GT <- RunTSNE(GT, dims.use = 1:10, seed.use = 1, tsne.method = "Rtsne")
+for(ident in c("Treatment", "Sex", "Date", "GTClust")){
+  GT <- SetAllIdent(GT, ident)
+  TSNEPlot(GT, plot.title = ident)
+}
+
+writeMarkers <- function(object, ident, file.path){
+  message('Finding Markers of ', ident)
+  markers <- FindMarkers(object, ident.1 = ident)
+  message('Writing Markers of ', ident)
+  write.xlsx(markers, file.path, sheetName = paste0("Clust_", ident), append = T)
+}
+
+#lapply(0:17, function(i) writeMarkers(GT, i, "MB_Markers.xlsx"))
+```
+###Filter out doublet clusters
+```{r}
+# Doublets are identified by broad expression of conflicting markers.
+# Usually with low (scaled) levels of transcript detected, and often biased towards few replicates
+GT <- SetAllIdent(GT, "GTClust")
+TSNEPlot(GT, colors.use = colors.use)
+#Theses steps must be done interactively
+#to.remove <- TSNEPlot(GT, do.identify = T, 
+#                     cells.use = WhichCells(GT, subset.name = "GTClust", 
+#                                            accept.value = 11))
+
+#to.remove <- c(to.remove, WhichCells(GT, 
+#                                     subset.name = "GTClust", 
+#                                     accept.value = 17))
+#to.keep <- WhichCells(GT)[!(WhichCells(GT) %in% to.remove)]
+GT2 <- readRDS("GT.rds")
+GT <- SubsetData(GT, cells.use = WhichCells(GT2))
+rm(GT2)
+TSNEPlot(GT, colors.use = colors.use)
+saveRDS(GT, "GT.rds")
+```
+
+#Begin characterizing Vehicle-only replicates
+```{r}
+Veh <- SubsetData(GT, subset.name = "Treatment", accept.value = "Vehicle")
+Veh <- FindVariableGenes(Veh, x.low.cutoff = 0.05, 
+                         x.high.cutoff = 5, 
+                         y.cutoff = 0.5, 
+                         y.high.cutoff = Inf, 
+                         num.bin = 20,
+                         do.plot = F)
+Veh.pca <- TestPCA(Veh, Veh@var.genes, do.return = T)
+Veh <- RunPCA(Veh, seed.use = 42, pcs.compute = 60)
+VlnPlot(Veh, "PC10", group.by = "Date")
+VlnPlot(Veh, "PC10", group.by = "Replicate")
+#PC10 shows batch effect associated with both run date and mouse. We will ignore PC10 for the tSNE visualization
+PrintPCA(Veh, 10)
+Veh <- RunTSNE(Veh, reduction.use = 'pca', seed.use = 1, dims.use = c(1:9, 11))
+# Plot tSNE with Clusters from Group Set
+TSNEPlot(Veh, colors.use = colors.use)
+
+# Plot tSNE with Clusters from Vehicle-only
+# Fig. 2A
+Veh <- FindClusters(Veh, dims.use = c(1:9, 11), resolution = 0.8)
+Veh <- StashIdent(Veh, 'VehClust')
+veh.colors <- colors.use[c(1:9, 13, 14, 12, 16, 15, 17)]
+#devSVG("Fig.2A_Veh_tSNE_Clusters.svg")
+TSNEPlot(Veh, colors.use = veh.colors)
+#dev.off()
+
+# Investigate Stromal Markers
+# Fig. 2B
+genes <- c("Col3a1", "C1qb", "Meg3", "Sox10", 'Aqp4', "Pecam1")
+thresh <- c(3,3,4,1,3,2)
+names(thresh) <- genes
+colors2 <- colors.use[c(16, 14, 15, 13, 12, 17)]
+#devSVG("Fig.2B_Veh_Stromal_Markers.svg")
+MultiFeaturePlot(Veh, gene.list = genes, colors = colors2, threshold = thresh, pt.size = 1)
+#dev.off()
+```
+
+###Organize Clusters
+```{r}
+# To better organize we want to isolate the solid tumor from the stroma
+# Fig. 2C
+Veh <- SetAllIdent(Veh, 'VehClust')
+#devSVG("Fig.2C_Veh_HCA_Dendrogram.svg")
+Veh <- BuildClusterTree(Veh, pcs.use = c(1:9, 11))
+#dev.off()
+
+# Fig. 2D
+Veh@ident <- plyr::mapvalues(Veh@ident, from = levels(Veh@ident), 
+                             to = c("Node_A", "Node_A", "Node_B", 
+                                    "Node_B", "Node_B", "Node_C",
+                                    "Node_C", "Node_C", "Node_A",
+                                    "Oligodendrocytes", "Microglia",
+                                    "Astrocytes", "Vascular_Fibroblasts",
+                                    "Neurons", "Endothelial_Cells"))
+Veh <- StashIdent(Veh, "VehNode")
+vehIDs <- c("Node_A", "Node_B", "Node_C", "Neurons",
+                      "Oligodendrocytes", "Astrocytes", "Microglia",
+                      "Vascular_Fibroblasts", "Endothelial_Cells")
+colors2 <- c(brewer.pal(5, "Paired")[c(5, 1, 3)], 
+             colors.use[c(15, 13, 12, 14, 16, 17)])
+#devSVG("Fig.2D_Nodes_projected_onto_t-SNE.svg")
+TSNEPlot(Veh, colors.use = colors2, plot.order = rev(vehIDs))
+#dev.off()
+
+saveRDS(Veh, 'Veh.rds')
+```
+
+#Introduce Wild Type Cerebellum (at age P7)
+###Preprocessing
+```{r}
+mice <- paste0("WT", c("01", "02", "03", "04", "05"))
+
+seurats <- list()
+min.genes <- 300
+min.cells <- 0
+prep.Seurat <- function(i){
+  message('Starting with Sample ', i)
+  df <- fread(paste0('../DGEs/', i, '.dge'),
+              stringsAsFactors = F, data.table = F, 
+              sep = "\t", header = T)
+  rownames(df) <- df$GENE
+  df$GENE <- NULL
+  colnames(df) <- paste(as.character(i), colnames(df), sep="_")
+  dat <- CreateSeuratObject(raw.data = df,
+                                       min.cells = min.cells,
+                                       min.genes = min.genes)
+  dat <- StashIdent(object = dat,
+                    save.name = "Replicate")
+  return(dat)
+}
+
+seurats <- lapply(mice[1:5], function(x) prep.Seurat(x))
+names(seurats) <- mice[1:5]
+
+WT <- MergeSeurat(seurats[['WT01']], seurats[['WT02']])
+for(mouse in mice[3:5]){
+  WT <- MergeSeurat(WT, seurats[[mouse]])
+}
+
+WT@misc <- WT@raw.data
+```
+###Initial Filtering
+```{r}
+mito.genes <- grep(pattern = "^mt-", 
+                   x = rownames(WT@raw.data), 
+                   value = T)
+percent.mito <- (Matrix::colSums(WT@raw.data[mito.genes, ])
+                 /Matrix::colSums(WT@raw.data))*100
+WT <- AddMetaData(object = WT, 
+                  metadata = percent.mito, 
+                  col.name = "percent.mito")
+VlnPlot(WT, c("nUMI", "nGene", "percent.mito"), group.by = "Replicate")
+
+WT <- SubsetData(WT, 
+                 subset.name = 'nUMI', 
+                 accept.high = 30000,
+                 accept.low = 350)
+
+max.UMI <- 4*sd(WT@meta.data$nUMI) + median(WT@meta.data$nUMI)
+max.Gene <- 4*sd(WT@meta.data$nGene) + median(WT@meta.data$nGene)
+max.mito <- sd(WT@meta.data$percent.mito)*5 + median(WT@meta.data$percent.mito)
+
+WT <- SubsetData(WT, 
+                 subset.name = 'nGene', 
+                 accept.high = max.Gene,
+                 accept.low = 500)
+WT <- SubsetData(WT, 
+                 subset.name = 'nUMI', 
+                 accept.high = max.UMI,
+                 accept.low = 600)
+WT <- SubsetData(WT, 
+                 subset.name = 'percent.mito', 
+                 accept.high = max.mito)
+WT@raw.data <- WT@raw.data[, WhichCells(WT)]
+
+VlnPlot(WT, c("nUMI", "nGene", "percent.mito"), group.by = "Replicate")
+
+WT <- NormalizeData(WT)
+saveRDS(WT, 'CGNPs.raw.rds')
+```
+###Seurat workflow
+```{r}
+WT <- ScaleData(WT, vars.to.regress = c('nUMI'))
+#HVG Selection
+WT <- FindVariableGenes(WT, x.low.cutoff = 0.05, 
+                        x.high.cutoff = 5, 
+                        y.cutoff = 0.5, 
+                        y.high.cutoff = Inf, 
+                        num.bin = 40)
+length(WT@var.genes)
+#Select PCs
+WT.pc.test <- TestPCA(WT, WT@var.genes, do.return = T)
+WT.pc.test[, 1:20]
+#Run n PCs
+WT <- RunPCA(WT, pc.genes = WT@var.genes, pcs.compute = 60, 
+             weight.by.var = T, use.imputed = F, seed = 42)
+#Run tSNE for data visualization
+WT <- RunTSNE(WT, reduction.use = 'pca', dims.use = 1:14, 
+              perplexity = 30, seed.use = 1, tsne.method = "Rtsne",
+              add.iter = 0)
+#Check for strong batch effect in the tSNE
+TSNEPlot(WT, colors.use = c(colors.use, more.colors))
+#find clusters
+WT <- FindClusters(WT, dims.use = 1:14, k.param = 7, resolution = 0.6, 
+                   force.recalc = F)
+WT <- StashIdent(WT, 'WildtypeClust')
+getMarkers <- function(i){
+  m <- FindMarkers(WT, i, test.use = 'bimod')
+  colnames(m) <- c('p_val', 'avg_logFC', paste0('pct.clust', i), 
+                   'pct.allOthers', 'p_val_adj')
+  write.xlsx(m, file = 'CGNP_Markers.xlsx', sheetName = paste0('Cluster ', i), 
+             append = T)
+}
+
+TSNEPlot(WT, colors.use = c(colors.use, more.colors))
+#sapply(X = levels(WT@ident)[], FUN = function(i) getMarkers(i))
+WT <- SubsetData(WT, ident.remove = 13)
+# Label cells with canonical markers
+# Fig. 3A
+
+genes <- c("Col3a1", "C1qb", "Meg3", "Sox10", 'Aqp4', "Pecam1")
+thresh <- c(3,3,4,1,3,1)
+names(thresh) <- genes
+colors2 <- colors.use[c(16, 14, 15, 13, 12, 17)]
+p <- MultiFeaturePlot(WT, gene.list = genes, colors = colors2, threshold = thresh, pt.size = 1)
+#devSVG('Fig.3A_WT_Stromal_Markers.svg')
+p
+#dev.off()
+
+# Fig. 3B
+colors2 <- brewer.pal(10,'Paired')[c(10, 4, 2, 6)]
+thresh <- c(1,1,2,2)
+names(thresh) <- c("Pax2", "Sox2", "Ascl1", "Pax3")
+#devSVG('Fig.3B_WT_IP_Markers.svg')
+MultiFeaturePlot(Object = WT, gene.list = c("Pax2", "Pax3", "Sox2", "Ascl1"), 
+                 colors = colors2, null.color = "#DBDBDB", 
+                 threshold = thresh, pt.size = 1, show.legend = T)
+#dev.off()
+#Fig.3C
+genes <- c("Ccnd2", "Barhl1", "Cntn2", "Rbfox3", "Grin2b", "Gli1")
+thresh <- c(3, 2, 1, 2, 2, 1)
+names(thresh) <- genes
+colors2 <- c(brewer.pal(10,'Paired')[c(9,1,3,5,7)], "red")
+
+#devSVG("Fig.3C_WT_CGNP_markers.svg")
+MultiFeaturePlot(WT, gene.list = genes, colors = colors2, threshold = thresh, pt.size = 1, null.color = "#DBDBDB")
+#dev.off()
+saveRDS(WT, "WT.rds")
+```
+#Projection of Vehicle Cells into WT tSNE
+```{r}
+#Figure 3D
+genes.use <- intersect(WT@var.genes, rownames(Veh@data))
+WT.loadings <- GetGeneLoadings(WT, 'pca', 1:14, genes.use = genes.use)
+WT.embeddings <- GetCellEmbeddings(WT, 'pca', 1:14)
+WT.tsne <- GetCellEmbeddings(WT, reduction.type = 'tsne', dims.use = 1:2)
+WT@meta.data$ID <- rep("WT", nrow(WT@meta.data))
+Veh@meta.data$ID <- Veh@meta.data$VehNode
+
+data <- as.matrix(Veh@scale.data[genes.use,])
+Veh.embeddings <- apply(WT.loadings, 2 , FUN = function(i) colSums(i*data))
+
+train.tsne1 <- knnreg(WT.embeddings, WT.tsne[, 1], k = 5)
+train.tsne2 <- knnreg(WT.embeddings, WT.tsne[, 2], k = 5)
+test.tsne1 <- predict(train.tsne1, Veh.embeddings)
+test.tsne2 <- predict(train.tsne2, Veh.embeddings)
+test.tsne <- cbind(test.tsne1, test.tsne2)
+rownames(test.tsne) <- rownames(Veh.embeddings)
+colnames(test.tsne) <- paste0('tSNE_', 1:2)
+Veh <- SetDimReduction(Veh, 'tsne', 'cell.embeddings', test.tsne)
+colors2 <- c(brewer.pal(5, "Paired")[c(5, 1, 3)], 
+             colors.use[c(15, 13, 12, 14, 16, 17)])
+TSNEPlot(Veh, pt.size = 0.3, colors.use = colors2, 
+         plot.order = rev(vehIDs))
+
+Veh.tsne <- GetCellEmbeddings(Veh, 'tsne')
+WT.tsne <- GetCellEmbeddings(WT, 'tsne')
+M <- MergeSeurat(Veh, WT)
+M <- SetDimReduction(M, 'tsne', 'cell.embeddings', rbind(Veh.tsne, WT.tsne))
+M <- SetDimReduction(M, 'tsne', 'key', 'tSNE_')
+M <- SetAllIdent(M, 'ID')
+
+#devSVG("Fig.3D_VehCells_WT.knn.svg")
+TSNEPlot(M, colors.use = c("#DBDBDB", colors2), 
+         plot.order = rev(c("WT", vehIDs)),
+         no.legend = F, pt.size = 0.5)
+#dev.off()
+```
+#ICA-based analyses of CGNP-like Vehicle-treated cells
+```{r}
+knitr::opts_chunk$set(fig.width=9, fig.height=6) 
+Veh <- readRDS('Veh.rds')
+colors2 <- brewer.pal(9, "Paired")[c(5,1,3)]
+Cent <- SubsetData(Veh, 
+                   ident.use = grep("Node", levels(Veh@ident), value = T))
+Cent@meta.data <- Cent@meta.data[WhichCells(Cent), ]
+Cent@raw.data <- Cent@raw.data[, WhichCells(Cent)]
+Cent@ident <- plyr::mapvalues(Cent@ident, levels(Cent@ident), 
+                              c("Node A", "Node B", "Node C"))
+Cent <- NormalizeData(Cent)
+Cent <- FindVariableGenes(Cent, x.low.cutoff = 0.05, 
+                         x.high.cutoff = 5, 
+                         y.cutoff = 0.5, 
+                         y.high.cutoff = Inf, 
+                         num.bin = 40)
+Cent <- RunICA(Cent, ics.compute = 4)
+PrintICA(Cent, 1:4)
+Cent <- RunTSNE(Cent, reduction.use = 'ica', dim.embed = 2, dims.use =1:4)
+#devSVG("Fig.4A_ICA_tSNE_with_Nodes.svg")
+TSNEPlot(Cent, colors.use = colors2)
+#dev.off()
+
+PrintICA(Cent, 4)
+# Plot ICs, orient colors so "biological" genes are highlighted
+# Fig. 4B
+#devSVG("Fig.4B_IC1.svg")
+FeaturePlot(Cent, 'IC1', cols.use = rev(magma(50)), pt.size = 1.5)
+#dev.off()
+#devSVG("Fig.4B_IC2.svg")
+FeaturePlot(Cent, 'IC2', cols.use = magma(50), pt.size = 1.5)
+#dev.off()
+#devSVG("Fig.4B_IC3.svg")
+FeaturePlot(Cent, 'IC3', cols.use = rev(magma(50)), pt.size = 1.5)
+#dev.off()
+#devSVG("Fig.4B_IC4.svg")
+FeaturePlot(Cent, 'IC4', cols.use = rev(magma(50)), pt.size = 1.5)
+#dev.off()
+
+#Fig.4C
+genes <- c("Ccnd1", "Ccne2", "Ccna2", "Ccnb2")
+thresh <- c(2,1,2,2)
+names(thresh) <- genes
+colors2 <- brewer.pal(4,'Dark2')
+#devSVG("Fig.4C_ICA_tSNE_with_Cyclins_and_arrows.svg")
+MultiFeaturePlot(Cent, gene.list = genes, colors = colors2, 
+                 threshold = thresh, pt.size = 1)
+#dev.off()
+
+# Fig.4E
+Cent <- SetAllIdent(Cent, "VehNode")
+genes <- c("Gli1", "Atoh1", "Mki67", "Pcna", "Ccnd1", "Ccnd2", 'Barhl1', "Rbfox3", "Cntn2", "Meg3")
+#devSVG("Fig.4E_DotPlot.svg", width = 10)
+DotPlot2(Cent, genes.plot = genes, 
+         order = c("Node_A", "Node_B", "Node_C"), 
+         plot.legend = T)
+#dev.off()
+
+# Seurat "Module Score" by cell cycle genes (Macosko, et al., 2015)
+# Supplemental figure 1
+ccg <- readLines("~/CellCycleGenes.txt")
+g1s <- list(ccg[1:86])
+s <- list(ccg[87:172])
+g2m <- list(ccg[173:252])
+m <- list(ccg[253:336])
+mg1 <- list(ccg[337:381])
+Cent <- AddModuleScore(object = Cent, genes.list = g1s, 
+                       enrich.name = "G1S")
+Cent <- AddModuleScore(object = Cent, genes.list = s,
+                       enrich.name = "S")
+Cent <- AddModuleScore(object = Cent, genes.list = g2m,
+                       enrich.name = "G2M")
+Cent <- AddModuleScore(object = Cent, genes.list = m, 
+                       enrich.name = "M")
+Cent <- AddModuleScore(object = Cent, genes.list = mg1,
+                       enrich.name = "MG1")
+ncol(Cent@meta.data)
+colnames(Cent@meta.data) <- plyr::mapvalues(colnames(Cent@meta.data), 
+                                            from = c("G1S1",
+                                                     "S1",
+                                                     "G2M1",
+                                                     "M1",
+                                                     "MG11"), 
+                                            to = c("G1/S_Phase",
+                                                   "S_Phase",
+                                                   "G2/M_Phase",
+                                                   "M_Phase",
+                                                   "M/G1_Phase"))
+
+p <- list()
+p <- FeaturePlot(Cent, c("G1/S_Phase", "S_Phase", "G2/M_Phase", "M_Phase", "M/G1_Phase"), cols.use = magma(50), do.return = T)
+genes <- c("Ccnd1", "Ccne2", "Ccna2", "Ccnb2")
+thresh <- c(2,1,2,2)
+names(thresh) <- genes
+colors2 <- brewer.pal(4,'Dark2')
+p[[6]] <- MultiFeaturePlot(Cent, gene.list = genes, colors = colors2, threshold = thresh, pt.size = 1)
+#devSVG("Fig_S1.svg", width = 10, height = 15)
+plot_grid(plotlist = p, ncol = 2)
+#dev.off()
+
+# Supplemental figure 2
+genes <- c("Mki67", "Pcna", "Ccnd1", "Ccnd2", "Gli1", "Atoh1", "Barhl1", "Cntn2", "Rbfox3", "Meg3")
+p <- list()
+for(i in 1:10){
+  message(genes[i])
+  p[[i]] <- MultiFeaturePlot(Cent, genes[i], colors = colors.use[i], 
+                             pt.size = 1, scale.color = T)
+}
+#devSVG("Fig_S2_Scaled.svg", width = 20, height = 11.25)
+plot_grid(plotlist = p, ncol = 4)
+#dev.off()
+saveRDS(Cent, 'VehCent.rds')
+```
+##Add GO Annotations to ICAs
+```{r}
+library(xlsx)
+IC.table <- read.xlsx("~/Supplemental_table_3.xlsx", 1)
+ref.genes = Cent@var.genes
+
+library(org.Mm.eg.db)
+GO = toTable(org.Mm.egGO); SYMBOL = toTable(org.Mm.egSYMBOL)
+GO_data_frame = data.frame(GO$go_id, GO$Evidence, 
+                           SYMBOL$symbol[match(GO$gene_id, SYMBOL$gene_id)])
+
+#create GOAllFrame object
+library(AnnotationDbi)
+GO_ALLFrame = GOAllFrame(GOFrame(GO_data_frame, organism = 'Mus musculus'))
+
+#create gene set
+library(GSEABase)
+gsc <- GeneSetCollection(GO_ALLFrame, setType = GOCollection())
+
+#perform GO enrichment analysis and save results to list - this make take several minutes
+library(GOstats)
+GSEAGO = vector('list',4)
+for(i in seq(1, 12, by = 3)){
+  GSEAGO[[i+1]] = summary(hyperGTest(GSEAGOHyperGParams(name = 'Mus musculus GO', 
+              geneSetCollection = gsc, geneIds = as.character(IC.table[, i]), 
+              universeGeneIds = ref.genes, ontology = 'BP', pvalueCutoff = 0.05, 
+              conditional = FALSE, testDirection = 'over')))
+  print(i)
+}
+
+for(i in seq(1, 12, by = 3)){
+  write.xlsx(x = GSEAGO[[i+1]], file = 'Supp_Table3_GO.xlsx', sheetName = paste0('IC ', i), append = T)
+}
+
+
+cutoff.size = 100
+
+GO.module.name = rep(NA,length(unique(modules)))
+for (i in 1:length(unique(modules))){
+  GO.module.name[i] = 
+    GSEAGO[[i]][GSEAGO[[i]]$Size<cutoff.size,
+    ][which(GSEAGO[[i]][GSEAGO[[i]]$Size<cutoff.size,]$Count==max(GSEAGO[[i]][GSEAGO[[i]]$
+    Size<cutoff.size,]$Count)),7]
+}
+
+GO.module.name[1] = 'module 0'
+#calculate module significance
+MS.lscore = as.data.frame(cbind(GS.lscore,modules))
+MS.lscore$log_p_value = -log10(as.numeric(MS.lscore$p_value))
+MS.lscore = ddply(MS.lscore, .(modules), summarize, mean(log_p_value), sd(log_p_value))
+colnames(MS.lscore) = c('modules','pval','sd')
+MS.lscore.bar = as.numeric(MS.lscore[,2])
+MS.lscore.bar[MS.lscore.bar<(-log10(0.05))] = 0
+names(MS.lscore.bar) = GO.module.name
+
+METree.GO = METree
+label.order = match(METree$labels,paste0('ME',labels2colors(0:(length(unique(modules))-1))))
+METree.GO$labels = GO.module.name[label.order]
+plotTree.wBars(as.phylo(METree.GO), MS.lscore.bar, tip.labels = TRUE, scale = 0.2)
+```
+
+#Analysis of Sox2+ Cells in Vehicle-Tumor
+```{r}
+Veh <- readRDS("Veh.rds")
+# Fig. 5A
+#devSVG("Fig.5a_Sox2_YFP_Veh.svg")
+MultiFeaturePlot(Veh, c("Sox2", "SmoM2-EYFP"), colors = c("red", "green"))
+#dev.off()
+
+# Fig. 5C
+# Sox2+ Bar plot... it's a mess of code. Hang in there.
+Veh <- SetAllIdent(Veh, "Replicate")
+l <- list()
+for(i in levels(Veh@ident)){
+  l[[i]] <- SubsetData(Veh, ident.use = i)
+}
+classes <- c("Astrocytes",
+             "Astrocytes YFP",
+             "Oligodendrocytes",
+             "Oligodendrocytes YFP",
+             "Node A",
+             "Node A YFP",
+             "Node B",
+             "Node B YFP",
+             "Node C",
+             "Node C YFP")
+dat.raw <- data.frame(MB05 = rep(0, length(classes)),
+                  MB06 = rep(0, length(classes)),
+                  MB10 = rep(0, length(classes)),
+                  MB13 = rep(0, length(classes)),
+                  MB15 = rep(0, length(classes)))
+popDat <- function(i){
+o = l[[i]]
+Sox2.cells <- colnames(o@data[, o@data["Sox2", ] > 0])
+NodeA.cells <- intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Node_A"))
+NodeB.cells <- intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Node_B"))
+NodeC.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Node_C")))
+Oligo.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Oligodendrocytes")))
+Astro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Astrocytes")))
+Endo.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Endothelial_Cells")))
+Fibro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                 accept.value = "Vascular_Fibroblasts")))
+Micro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Microglia")))
+Neuro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "VehNode", 
+                                    accept.value = "Neurons")))
+YFP.cells <- intersect(Sox2.cells, 
+                       colnames(o@data[, o@data["SmoM2-EYFP", ] > 0]))
+
+#Add YFP
+##RESTRICT TO ONLY CLASSES WITH > 10 CELLS
+NodeA.yfp.cells <- intersect(NodeA.cells, YFP.cells)
+#NodeA.cells <- NodeA.cells[!(NodeA.cells %in% YFP.cells)]
+NodeB.yfp.cells <- intersect(NodeB.cells, YFP.cells)
+#NodeB.cells <- NodeB.cells[!(NodeB.cells %in% YFP.cells)]
+NodeC.yfp.cells <- intersect(NodeC.cells, YFP.cells)
+#NodeC.cells <- NodeC.cells[!(NodeC.cells %in% YFP.cells)]
+Oligo.yfp.cells <- intersect(Oligo.cells, YFP.cells)
+#Oligo.cells <- Oligo.cells[!(Oligo.cells %in% YFP.cells)]
+Astro.yfp.cells <- intersect(Astro.cells, YFP.cells)
+#Astro.cells <- Astro.cells[!(Astro.cells %in% YFP.cells)]
+#Endo.yfp.cells <- intersect(Endo.cells, YFP.cells)
+#Endo.cells <- Endo.cells[!(Endo.cells %in% YFP.cells)]
+#Fibro.yfp.cells <- intersect(Fibro.cells, YFP.cells)
+#Fibro.cells <- Fibro.cells[!(Fibro.cells %in% YFP.cells)]
+#Micro.yfp.cells <- intersect(Micro.cells, YFP.cells)
+#Micro.cells <- Micro.cells[!(Micro.cells %in% YFP.cells)]
+#Neuro.yfp.cells <- intersect(Neuro.cells, YFP.cells)
+#Neuro.cells <- Neuro.cells[!(Neuro.cells %in% YFP.cells)]
+
+s <- list(NodeA.cells,
+          NodeA.yfp.cells,
+          NodeB.cells,
+          NodeB.yfp.cells,
+          NodeC.cells,
+          NodeC.yfp.cells,
+          Oligo.cells,
+          Oligo.yfp.cells,
+          Astro.cells,
+          Astro.yfp.cells)
+p <- lapply(s, function(n) length(n))
+dat.raw[, i] <- as.numeric(unlist(p))
+}
+
+dat <- sapply(names(l), function(i) popDat(i))
+rownames(dat) <- classes
+d <- dat[!(rownames(dat) %in% grep("YFP", rownames(dat), value = T)), ]
+# Normalize by total cells by replicate
+d <- apply(d, 2, function(i) i <- i/sum(i))
+n <- data.frame(y = NA, ymin = NA, ymax = NA)
+for(i in rownames(d)){
+  n <- rbind(n, mean_se(d[i, ]))
+}
+n <- n[-1,]
+d <- cbind(d, n)
+d <- as.data.frame(d)
+d$ID <- rownames(d)
+d$yminA <- rep(0, nrow(d))
+d$ymaxA <- rep(0, nrow(d))
+for(r in 1:nrow(d)){
+  d[r, "yminA"] <- sum(d[(r+1):5, "y"]) + d[r, "ymin"]
+}
+for(r in 1:nrow(d)){
+  d[r, "ymaxA"] <- sum(d[(r+1):5, "y"]) + d[r, "ymax"]
+}
+d[5, "ymaxA"] <- d[5, "ymax"]
+d[5, "yminA"] <- d[5, "ymin"]
+d$ID <- factor(d$ID, levels = rownames(d))
+
+
+levels(d$ID)
+p <- list()
+p[[1]] <- ggplot(d, aes(x = "Vehicle", y = y, fill = ID)) +
+           geom_col(position = "fill") +
+  scale_fill_manual(values = c(colors.use[c(12, 13)], 
+                               brewer.pal(5, "Paired")[c(5, 1, 3)])) +
+            geom_errorbar(data = d, 
+                          aes(ymin = yminA, ymax = ymaxA, width = 0.3),
+                          position = 'dodge')
+#devSVG("Fig.5C_Sox2_StackBar.svg")
+p[[1]]
+#dev.off()
+
+#write.xlsx(dat, "Sox2_Yfp_By_CellClass.xlsx")
+```
+### Sox2+ Cells Further Analysis (tSNE)
+```{r}
+# Fig 5D, 5E, 5F
+Sox2.cells <- colnames(Veh@data[, Veh@data["Sox2", ] > 0])
+S2 <- SubsetData(Veh, cells.use = Sox2.cells)
+S2 <- FindVariableGenes(S2, x.low.cutoff = 0.05, 
+                         x.high.cutoff = 5, 
+                         y.cutoff = 0.75, 
+                         y.high.cutoff = 10, 
+                         num.bin = 40)
+S2.pca <- TestPCA(S2, S2@var.genes, do.return = T)
+S2 <- RunICA(S2, ic.genes = S2@var.genes, ics.compute = 4)
+S2 <- RunTSNE(S2, 'ica', dims.use = c(1:4))
+S2 <- SetAllIdent(S2, "VehNode")
+TSNEPlot(S2, colors.use = colors.use)
+
+# Fig 5D
+#devSVG("Fig.5D_Sox2_Glial_Features.svg")
+MultiFeaturePlot(S2, c("Aqp4", "Sox10"), 
+                 colors = colors.use[c(12, 13)], pt.size = 1)
+#dev.off()
+
+# Fig 5E
+Os <- WhichCells(S2, subset.name = "VehNode", 
+                 accept.value = "Oligodendrocytes")
+S2@meta.data$Highlight <- rep("low", nrow(S2@meta.data))
+S2@meta.data[Os, 'Highlight'] <- "high"
+S2 <- SetAllIdent(S2, "VehNode")
+O <- SubsetData(S2, cells.use = Os)
+TSNEPlot(O)
+O@data <- O@misc[, WhichCells(O)]
+p <- list()
+p[[1]] <- MultiFeaturePlot(O, "Pdgfra", title = "Pdgfra", 
+                           show.legend = F, pt.size = 1)
+p[[2]] <- MultiFeaturePlot(O, "Mbp", title = "Mbp",
+                           show.legend = F, pt.size = 1)
+p[[3]] <- MultiFeaturePlot(O, "Plp1", title = "Plp1", 
+                           show.legend = F, pt.size = 1)
+p[[4]] <- MultiFeaturePlot(O, "Mog", title = "Mog", 
+                           show.legend = F, pt.size = 1)
+p[[5]] <- MultiFeaturePlot(O, "SmoM2-EYFP", title = "Yfp", 
+                           show.legend = F, pt.size = 1)
+S2 <- SetAllIdent(S2, "Highlight")
+p[[6]] <- TSNEPlot(S2, colors.use = c(colors.use[13], grey(0.7)), 
+                   plot.title = "Oligodendrocytes", no.legend = T, 
+                   do.return = T)
+#devSVG("Fig.5E_Composite_Features_Sox2+Oligos.svg")
+plot_grid(p[[6]], p[[1]],
+          p[[2]], p[[3]],
+          p[[4]], p[[5]], ncol = 2)
+#dev.off()
+
+# Chi Square testing on Mbp, Mog, Pdgfra, SmoM2-EYFP in Oligos
+OPC <- TSNEPlot(O, do.identify = T)
+Mat <- TSNEPlot(O, do.identify = T)
+
+# Function to make 2x2 matrix - group x pos/neg for gene
+getSum <- function(i, O, cells1, cells2){
+  pos1 <- sum(O@data[i, cells1] > 0)
+  neg1 <- length(O@data[i, cells1]) - pos1
+  pos2 <- sum(O@data[i, cells2] > 0)
+  neg2 <- length(O@data[i, cells2]) - pos2
+  mtx <- data.frame("cells1" = c(pos1, neg1), 
+                    "cells2" = c(pos2, neg2))
+  rownames(mtx) <- c("Pos", "Neg")
+  return(mtx)
+}
+genes <- c("Mbp", "Mog", "Pdgfra", "SmoM2-EYFP")
+for(gene in genes){
+  print(gene)
+  print(chisq.test(getSum(gene, O, OPC, Mat))$p.value)
+}
+"Mbp"
+[1] 1.085564e-17
+[1] "Mog"
+[1] 9.160045e-07
+[1] "Pdgfra"
+[1] 1.293513e-20
+[1] "SmoM2-EYFP"
+[1] 0.5071907
+
+# Fig 5E
+As <- WhichCells(S2, subset.name = "VehNode", 
+                 accept.value = "Astrocytes")
+S2@meta.data$Highlight <- rep("low", nrow(S2@meta.data))
+S2@meta.data[As, 'Highlight'] <- "high"
+
+S2 <- SetAllIdent(S2, "VehNode")
+A <- SubsetData(S2, cells.use = As)
+TSNEPlot(A)
+A@data <- A@misc[, WhichCells(A)]
+p <- list()
+p[[1]] <- MultiFeaturePlot(A, "Olig1", title = "Olig1", 
+                           show.legend = F, pt.size = 3)
+p[[2]] <- MultiFeaturePlot(A, "SmoM2-EYFP", title = "Yfp",
+                           show.legend = F, pt.size = 1)
+S2 <- SetAllIdent(S2, "Highlight")
+p[[3]] <- TSNEPlot(S2, colors.use = c(colors.use[12], grey(0.7)), 
+                   plot.title = "Astrocytes", no.legend = T, 
+                   do.return = T)
+#devSVG("Fig.5E_Composite_Features_Sox2+Astros.svg", width = 3.5)
+plot_grid(p[[3]],
+          p[[1]],
+          p[[2]], ncol = 1)
+#dev.off()
+AP <- TSNEPlot(A, do.identify = T)
+AMat <- TSNEPlot(A, do.identify = T)
+genes <- c("Olig1", "SmoM2-EYFP")
+for(gene in genes){
+  print(gene)
+  print(chisq.test(getSum(gene, A, AP, AMat))$p.value)
+}
+[1] "Olig1"
+[1] 2.741437e-08
+[1] "SmoM2-EYFP"
+[1] 0.01773535
+
+```
+#Analysis of Treated and Untreated Grouped Together (GT)
+```{r}
+GT <- readRDS('GT.rds')
+#Separate into control & treatment sets for plotting
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+# Investigate Stromal Markers
+# Fig. 6A
+genes <- c("Col3a1", "C1qb", "Meg3", "Sox10", 'Aqp4', "Pecam1")
+thresh <- c(3,3,4,1,3,2)
+names(thresh) <- genes
+colors2 <- colors.use[c(16, 14, 15, 13, 12, 17)]
+#devSVG("Fig.6A_GT_Stromal_Markers_GT.svg")
+MultiFeaturePlot(GT, gene.list = genes, colors = colors2, 
+                 threshold = thresh)
+#dev.off()
+#devSVG("Fig.6A_GT_Stromal_Markers_Ct.svg")
+MultiFeaturePlot(Ct, gene.list = genes, colors = colors2,
+                 threshold = thresh)
+#dev.off()
+#devSVG("Fig.6A_GT_Stromal_Markers_Tr.svg")
+MultiFeaturePlot(Tr, gene.list = genes, colors = colors2,
+                 threshold = thresh)
+#dev.off()
+```
+###Node-level analyses
+```{r}
+# To better organize we want to isolate the solid tumor from the stroma
+# Exact same process as in vehicle-alone above
+# Fig. 6B
+GT <- SetAllIdent(GT, 'GTClust')
+#devSVG("Fig.6B_GT_HCA_Dendrogram.svg")
+GT <- BuildClusterTree(GT, pcs.use = 1:10)
+#dev.off()
+TSNEPlot(GT, colors.use = colors.use)
+# Fig 6B
+GT@ident <- plyr::mapvalues(GT@ident, from = levels(GT@ident), 
+                             to = c("Node_B", "Node_B", "Node_A", 
+                                    "Node_A", "Node_A", "Node_C",
+                                    "Node_C", "Node_C", "Node_D",
+                                    "Node_D","Node_D",
+                                    "Astrocytes", "Oligodendrocytes",
+                                    "Microglia", "Neurons",
+                                    "Vascular_Fibroblasts",
+                                    "Endothelial_Cells"))
+GT <- StashIdent(GT, "GTNode")
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+gtIDs <- c("Node_A", "Node_B", "Node_C", "Node_D", "Neurons",
+           "Oligodendrocytes", "Astrocytes", "Microglia",
+           "Vascular_Fibroblasts", "Endothelial_Cells")
+colors2 <- colors.use[c(1:4, 15, 13, 12, 14, 16, 17)]
+#devSVG("Fig.6B_GT_Nodes_on_t-SNE_GT.svg")
+TSNEPlot(GT, colors.use = colors2, plot.order = rev(gtIDs),
+         do.return = T, pt.size = 0.5)
+#dev.off()
+#devSVG("Fig.6B_GT_Nodes_on_t-SNE_Ct.svg")
+TSNEPlot(Ct, colors.use = colors2, plot.order = rev(gtIDs),
+         do.return = T, pt.size = 0.5)
+#dev.off()
+#devSVG("Fig.6B_GT_Nodes_on_t-SNE_Tr.svg")
+TSNEPlot(Tr, colors.use = colors2, plot.order = rev(gtIDs),
+         do.return = T, pt.size = 0.5)
+#dev.off()
+
+# Fig 6C
+GT.cent <-  SubsetData(GT, subset.name = 'GTNode',
+                       accept.value = c("Node_A", "Node_B",
+                                        "Node_C", "Node_D"))
+genes <- c("Gli1", "Atoh1", "Mki67", "Pcna", "Ccnd1", "Ccnd2", 
+           'Barhl1', "Rbfox3", "Cntn2", "Meg3")
+#devSVG("Fig.6C_GT_DotPlot.svg", width = 10)
+DotPlot2(GT.cent, genes.plot = genes, 
+         order = c("Node_A", "Node_B", "Node_C", "Node_D"),
+         plot.legend = T)
+#dev.off()
+# Fig 6D
+#devSVG("Fig.6A_GT_Stromal_Markers_GT.svg")
+MultiFeaturePlot(GT, "SmoM2-EYFP")
+#dev.off()
+#devSVG("Fig.6A_GT_Stromal_Markers_GT.svg")
+MultiFeaturePlot(Ct, "SmoM2-EYFP")
+#dev.off()
+#devSVG("Fig.6A_GT_Stromal_Markers_GT.svg")
+MultiFeaturePlot(Tr, "SmoM2-EYFP")
+#dev.off()
+saveRDS(GT, "GT.rds")
+```
+#Projection of GT Cells into WT tSNE
+```{r}
+#Figure 3D
+genes.use <- intersect(WT@var.genes, rownames(GT@data))
+WT.loadings <- GetGeneLoadings(WT, 'pca', 1:14, genes.use = genes.use)
+WT.embeddings <- GetCellEmbeddings(WT, 'pca', 1:14)
+WT.tsne <- GetCellEmbeddings(WT, reduction.type = 'tsne', dims.use = 1:2)
+WT@meta.data$ID <- rep("WT", nrow(WT@meta.data))
+GT@meta.data$ID <- GT@meta.data$GTNode
+
+data <- as.matrix(GT@scale.data[genes.use,])
+GT.embeddings <- apply(WT.loadings, 2 , 
+                       FUN = function(i) colSums(i*data))
+
+train.tsne1 <- knnreg(WT.embeddings, WT.tsne[, 1], k = 5)
+train.tsne2 <- knnreg(WT.embeddings, WT.tsne[, 2], k = 5)
+test.tsne1 <- predict(train.tsne1, GT.embeddings)
+test.tsne2 <- predict(train.tsne2, GT.embeddings)
+test.tsne <- cbind(test.tsne1, test.tsne2)
+rownames(test.tsne) <- rownames(GT.embeddings)
+colnames(test.tsne) <- paste0('tSNE_', 1:2)
+GT <- SetDimReduction(GT, 'tsne', 'cell.embeddings', test.tsne)
+colors2 <- colors.use[c(2, 1, 3:4, 15, 13, 12, 14, 16, 17)]
+TSNEPlot(GT, pt.size = 0.3, colors.use = colors2, 
+         plot.order = rev(gtIDs))
+# Plot Control cells in projection
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Ct.tsne <- GetCellEmbeddings(Ct, 'tsne')
+WT.tsne <- GetCellEmbeddings(WT, 'tsne')
+M <- MergeSeurat(Ct, WT)
+M <- SetDimReduction(M, 'tsne', 'cell.embeddings', 
+                     rbind(Ct.tsne, WT.tsne))
+M <- SetDimReduction(M, 'tsne', 'key', 'tSNE_')
+M <- SetAllIdent(M, 'ID')
+#devSVG("Fig.6E_GTCells_WT_Ct.knn.svg")
+TSNEPlot(M, colors.use = c("#DBDBDB", colors2), 
+         plot.order = rev(c("WT", gtIDs)),
+         no.legend = F, pt.size = 0.5)
+#dev.off()
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+Tr.tsne <- GetCellEmbeddings(Tr, 'tsne')
+WT.tsne <- GetCellEmbeddings(WT, 'tsne')
+M1 <- MergeSeurat(Tr, WT)
+M1 <- SetDimReduction(M1, 'tsne', 'cell.embeddings', 
+                     rbind(Tr.tsne, WT.tsne))
+M1 <- SetDimReduction(M1, 'tsne', 'key', 'tSNE_')
+M1 <- SetAllIdent(M1, 'ID')
+#devSVG("Fig.6E_GTCells_WT_Tr.knn.svg")
+TSNEPlot(M1, colors.use = c("#DBDBDB", colors2), 
+         plot.order = rev(c("WT", gtIDs)),
+         no.legend = F, pt.size = 0.5)
+#dev.off()
+```
+#ICA-based analyses of CGNP-like Grouped-treatment cells
+```{r}
+# Fig 6F
+GT <- readRDS("GT.rds")
+GT <- SetAllIdent(GT, "GTNode")
+Cent <- SubsetData(GT, 
+                   ident.use = grep("Node", levels(GT@ident), value = T))
+Cent@meta.data <- Cent@meta.data[WhichCells(Cent), ]
+Cent@raw.data <- Cent@raw.data[, WhichCells(Cent)]
+Cent <- NormalizeData(Cent)
+Cent <- FindVariableGenes(Cent, x.low.cutoff = 0.05, 
+                         x.high.cutoff = 5, 
+                         y.cutoff = 0.5, 
+                         y.high.cutoff = Inf, 
+                         num.bin = 40)
+Cent <- RunICA(Cent, ics.compute = 4)
+PrintICA(Cent, 1:4)
+Cent <- RunTSNE(Cent, reduction.use = 'ica', 
+                dim.embed = 2, dims.use =1:4)
+TSNEPlot(Cent, colors.use = colors.use)
+PrintICA(Cent, 1)
+# Plot Treatment and control-separated by the differentiation IC
+# Fig. 4B
+#devSVG("Fig.6F_IC1_Ct.svg")
+FeaturePlot(Cent, 'IC1', cols.use = magma(50), pt.size = 1.5, 
+            cells.use = WhichCells(Cent, subset.name = "Treatment",
+                                   accept.value = "Vehicle"))
+#dev.off()
+#devSVG("Fig.4B_IC2_Tr.svg")
+FeaturePlot(Cent, 'IC1', cols.use = magma(50), pt.size = 1.5, 
+            cells.use = WhichCells(Cent, subset.name = "Treatment",
+                                   accept.value = "Vismodegib"))
+#dev.off()
+saveRDS(Cent, 'GTCent.rds')
+```
+#Differential population distribution plots
+```{r}
+# Fig 6G
+# Test significance
+aovTable(GT, alternate.plot = F, do.plot = F, 
+         run.test = T, level.dep = "GTNode", level.ind = "Treatment")
+# Draw Plot
+#devSVG("Fig.6G.svg", width = 10)
+aovTable(GT, alternate.plot = T, do.plot = F, 
+         run.test = F, level.dep = "GTNode", level.ind = "Treatment")
+#dev.off()
+# Fig 6H
+# Find what fraction of total YFP cells are in each cluster, by replicate
+YFP <- SubsetData(GT, 
+                  cells.use = names(which(GT@data["SmoM2-EYFP", ] > 0)))
+YFP <- SetAllIdent(YFP, "GTNode")
+# Get Significance
+aovTable(YFP, alternate.plot = F, do.plot = F, 
+         run.test = T, level.dep = "GTNode", level.ind = "Treatment")
+# Draw Plot
+#devSVG("Fig.6H_YFP_Fractions.svg", width = 10)
+aovTable(YFP, alternate.plot = T, do.plot = F, 
+         run.test = F, level.dep = "GTNode", level.ind = "Treatment")
+
+#dev.off()
+```
+#Drug resistant sub-populations
+```{r}
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+#devSVG("Fig.7A_Gli1_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, "Gli1")
+#dev.off()
+#devSVG("Fig.7A_Gli1_Drug.cells.svg")
+MultiFeaturePlot(Tr, "Gli1")
+#dev.off()
+#devSVG("Fig.7C_Gli1+Hes1_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, c("Gli1", "Hes1"))
+#dev.off()
+#devSVG("Fig.7C_Gli1+Hes1_Drug.cells.svg")
+MultiFeaturePlot(Tr, c("Gli1", "Hes1"))
+#dev.off()
+#devSVG("Fig.7E_Gli1+Myod1_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, c("Gli1", "Myod1"), colors = colors.use[c(1,3)])
+#dev.off()
+#devSVG("Fig.7E_Gli1+Myod1_Drug.cells.svg")
+MultiFeaturePlot(Tr, c("Gli1", "Myod1"), colors = colors.use[c(1,3)])
+#dev.off()
+
+# Fig 8A
+
+#devSVG("Fig.8A_Ezh2_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, "Ezh2", colors = colors.use[5])
+#dev.off()
+#devSVG("Fig.8A_Ezh2_Drug.cells.svg")
+MultiFeaturePlot(Tr, "Ezh2", colors = colors.use[5])
+#dev.off()
+#devSVG("Fig.8A_Suz12_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, "Suz12", colors = colors.use[2])
+#dev.off()
+#devSVG("Fig.8A_Suz12_Drug.cells.svg")
+MultiFeaturePlot(Tr, "Suz12", colors = colors.use[2])
+#dev.off()
+#devSVG("Fig.8A_Eed_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, "Eed", colors = colors.use[3])
+#dev.off()
+#devSVG("Fig.8A_Eed_Drug.cells.svg")
+MultiFeaturePlot(Tr, "Eed", colors = colors.use[3])
+#dev.off()
+#devSVG("Fig.8A_FullPRC2_Ctrl.cells.svg")
+MultiFeaturePlot(Ct, c("Ezh2", "Suz12", "Eed"),
+                 plot.intersection = T, pct.cutoff = 1, 
+                 colors = colors.use[4], multi.label = 'PRC2')
+#dev.off()
+#devSVG("Fig.8A_FullPRC2_Drug.cells.svg")
+MultiFeaturePlot(Tr, c("Ezh2", "Suz12", "Eed"),
+                 plot.intersection = T, pct.cutoff = 1, 
+                 colors = colors.use[4], multi.label = 'PRC2')
+#dev.off()
+```
+
+#Gene-Gene Correlation with MAGIC
+```{r}
+# Fig 8B, 8C
+library(Rmagic)
+#install.magic()
+GT <- readRDS("GT.rds")
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+Veh_M <- as.data.frame(Rmagic::magic(t(Ct@data), 
+                                         genes=c("Gli1", 
+                                                 "Sufu", 
+                                                 "Ptch1"), 
+                                         t=12))
+Vis_M <- as.data.frame(Rmagic::magic(t(Tr@data), 
+                                         genes=c("Gli1", 
+                                                 "Sufu", 
+                                                 "Ptch1"), 
+                                         t=12))
+Veh.meta <- as.data.frame(Ct@meta.data)
+Vis.meta <- as.data.frame(Tr@meta.data)
+
+Veh_label <- merge(Veh.meta, Veh_M, by=0, all=T, row.names = rownames(Veh.meta))
+Vis_label <- merge(Vis.meta, Vis_M, by=0, all=T, row.names = rownames(Vis.meta))
+
+Veh_Node_label <- subset(Veh_label, ID == 'Node A' |ID == 'Node B' | ID =='Node C')
+Vis_Node_label <- subset(Vis_label, ID == 'Node A' |ID == 'Node B' | ID =='Node C')
+
+
+
+dat <- Veh_label
+tests <- Veh_label[, "Gli1"]
+reps <- Veh_label[, "Replicate"]
+counts.mtx <- matrix(rep('0'), 
+                     ncol = length(tests),
+                     nrow = length(reps),
+                     dimnames = list(reps, tests))
+getCounts <- function(b){
+    r <- which(dat[, "Replicate"] == b)
+    d <- r[, "Gli1"]
+    return(d)
+}
+  counts.mtx <- t(sapply(reps, 
+                         function(b) counts.mtx[b, ] = getCounts(b)))
+
+  treatment <- sapply(reps, function(i) unique(dat[which(dat[, rep.name] == i), level.ind]))
+  counts.mtx <- as.data.frame(cbind(counts.mtx, 'Treatment' = as.character(treatment)))
+  counts.mtx[, 1:length(tests)] <- apply(counts.mtx[, 1:length(tests)], 2, function(x) as.numeric(as.character(x)))
+  if(run.test){
+    t <- sapply(X = colnames(counts.mtx)[1:length(tests)], 
+                FUN = function(i) summary(aov(as.formula(paste0(i, ' ~ Treatment')), data = counts.mtx)))
+   return(t) 
+  }
+
+
+
+
+
+
+
+
+
+p <- list()
+p[[1]] <- ggplot(data = Veh_Node_label, aes(x = Gli1, y = Ptch1, color = ID)) +
+  geom_point() + 
+  geom_smooth(method = 'lm', formula = y~x, color = "black") + 
+  scale_color_manual(values = colors.use, guide = F) +
+  xlim(0,0.4) +
+  ylim(0,0.105)
+p[[2]] <- ggplot(data = Vis_Node_label, aes(x = Gli1, y = Ptch1, color = ID)) +
+  geom_point() + 
+  geom_smooth(method = 'lm', formula = y~x, color = "black") + 
+  scale_color_manual(values = colors.use, guide = F) +
+  xlim(0,0.4) +
+  ylim(0,0.105)
+p[[3]] <- ggplot(data = Veh_Node_label, aes(x = Sufu, y = Gli1, color = ID)) +
+  geom_point() + 
+  geom_smooth(method = 'lm', formula = y~x, color = "black") + 
+  scale_color_manual(values = colors.use, guide = F) +
+  xlim(0.05,0.205) +
+  ylim(0,0.4)
+p[[4]] <- ggplot(data = Vis_Node_label, aes(x = Sufu, y = Gli1, color = ID)) +
+  geom_point() + 
+  geom_smooth(method = 'lm', formula = y~x, color = "black") + 
+  scale_color_manual(values = colors.use, guide = F) +
+  xlim(0.05,0.205) +
+  ylim(0,0.4)
+devSVG("Fig.8B_8C_Correlation_Plots_Supplement.svg")
+plot_grid(p[[1]], p[[2]],
+          p[[3]], p[[4]], ncol = 2)
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+```
+
+# Sox2+ ICA tSNE - Grouped Treatment
+```{r}
+# Fig 5D, 5E, 5F
+Sox2.cells <- colnames(GT@data[, GT@data["Sox2", ] > 0])
+S2 <- SubsetData(GT, cells.use = Sox2.cells)
+S2 <- FindVariableGenes(S2, x.low.cutoff = 0.05, 
+                         x.high.cutoff = 5, 
+                         y.cutoff = 0.75, 
+                         y.high.cutoff = 10, 
+                         num.bin = 40)
+S2.pca <- TestPCA(S2, S2@var.genes, do.return = T)
+S2 <- RunICA(S2, ic.genes = S2@var.genes, ics.compute = 4)
+S2 <- RunTSNE(S2, 'ica', dims.use = c(1:4))
+S2 <- SetAllIdent(S2, "GTNode")
+TSNEPlot(S2, colors.use = colors.use)
+S2.Ct <- SubsetData(S2, subset.name = "Treatment", 
+                    accept.value = "Vehicle")
+S2.Tr <- SubsetData(S2, subset.name = "Treatment", 
+                    accept.value = "Vismodegib")
+S2.Ct <- SetAllIdent(S2.Ct, "Treatment")
+S2.Tr <- SetAllIdent(S2.Tr, "Treatment")
+# Fig 8D
+#devSVG("Fig.8D_Sox2_Depletion_Ctrl.svg")
+MultiFeaturePlot(S2.Ct, c("Fabp7", "Hes1"), 
+                 colors = colors.use, pt.size = 1)
+#dev.off()
+#devSVG("Fig.8D_Sox2_Depletion_Drug.svg")
+MultiFeaturePlot(S2.Tr, c("Fabp7", "Hes1"), 
+                 colors = colors.use, pt.size = 1)
+#dev.off()
+
+# Fig 8E
+p <- TSNEPlot(S2.Ct, pt.size = 1, no.legend = T,
+              do.return = T)
+frame <- RunFrame(Object = S2.Ct, gene.use = "Nes")
+p <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status))
+frame <- RunFrame(Object = S2.Ct, gene.use = "Vim", threshold = 3)
+p <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status))
+frame <- RunFrame(Object = S2.Ct, gene.use = "SmoM2-EYFP")
+p2 <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status), size = 1) +
+      scale_colour_manual(values = c("red",
+                                     "green",
+                                     grey(0.7),
+                                     "purple"), guide = F)
+#devSVG("Fig.8E_Sox2_Depletion_Ctrl.svg")
+p2
+#dev.off()
+
+
+p <- TSNEPlot(S2.Tr, pt.size = 1, no.legend = T,
+              do.return = T)
+frame <- RunFrame(Object = S2.Tr, gene.use = "Nes")
+p <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status))
+frame <- RunFrame(Object = S2.Tr, gene.use = "Vim", threshold = 3)
+p <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status))
+frame <- RunFrame(Object = S2.Tr, gene.use = "SmoM2-EYFP")
+p2 <- p +  geom_point(data = frame[which(frame$Plot.Status != "None"), ], 
+                aes(x = tSNE_1, y = tSNE_2, color = Plot.Status), size = 1) +
+      scale_colour_manual(values = c("red",
+                                     "green",
+                                     "purple",
+                                      grey(0.7)), guide = F)
+#devSVG("Fig.8E_Sox2_Depletion_Drug.svg")
+p2
+#dev.off()
+```
+
+#Vismo-Treated Sox2+ Bar Figure
+```{r}
+# Sox2+ Bar plot... it's way more of a mess of code now!
+# Keep hanging in there.
+Ct <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vehicle")
+Tr <- SubsetData(GT, subset.name = "Treatment", 
+                 accept.value = "Vismodegib")
+Ct <- SetAllIdent(Ct, "Replicate")
+l <- list()
+for(i in levels(Ct@ident)){
+  l[[i]] <- SubsetData(Ct, ident.use = i)
+}
+classes <- c("Astrocytes",
+             "Astrocytes YFP",
+             "Oligodendrocytes",
+             "Oligodendrocytes YFP",
+             "Node A",
+             "Node A YFP",
+             "Node B",
+             "Node B YFP",
+             "Node C",
+             "Node C YFP",
+             "Node D",
+             "Node D YFP")
+dat.raw <- data.frame(MB05 = rep(0, length(classes)),
+                  MB06 = rep(0, length(classes)),
+                  MB10 = rep(0, length(classes)),
+                  MB13 = rep(0, length(classes)),
+                  MB15 = rep(0, length(classes)))
+popDat <- function(i){
+o = l[[i]]
+Sox2.cells <- colnames(o@data[, o@data["Sox2", ] > 0])
+NodeA.cells <- intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Node_A"))
+NodeB.cells <- intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Node_B"))
+NodeC.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Node_C")))
+NodeD.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Node_D")))
+Oligo.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Oligodendrocytes")))
+Astro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Astrocytes")))
+Endo.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Endothelial_Cells")))
+Fibro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                 accept.value = "Vascular_Fibroblasts")))
+Micro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Microglia")))
+Neuro.cells <- intersect(Sox2.cells, intersect(Sox2.cells, 
+                         WhichCells(o, subset.name = "GTNode", 
+                                    accept.value = "Neurons")))
+YFP.cells <- intersect(Sox2.cells, 
+                       colnames(o@data[, o@data["SmoM2-EYFP", ] > 0]))
+
+#Add YFP
+##RESTRICT TO ONLY CLASSES WITH > 10 CELLS
+NodeA.yfp.cells <- intersect(NodeA.cells, YFP.cells)
+#NodeA.cells <- NodeA.cells[!(NodeA.cells %in% YFP.cells)]
+NodeB.yfp.cells <- intersect(NodeB.cells, YFP.cells)
+#NodeB.cells <- NodeB.cells[!(NodeB.cells %in% YFP.cells)]
+NodeC.yfp.cells <- intersect(NodeC.cells, YFP.cells)
+#NodeC.cells <- NodeC.cells[!(NodeC.cells %in% YFP.cells)]
+NodeD.yfp.cells <- intersect(NodeD.cells, YFP.cells)
+#NodeD.cells <- NodeD.cells[!(NodeD.cells %in% YFP.cells)]
+Oligo.yfp.cells <- intersect(Oligo.cells, YFP.cells)
+#Oligo.cells <- Oligo.cells[!(Oligo.cells %in% YFP.cells)]
+Astro.yfp.cells <- intersect(Astro.cells, YFP.cells)
+#Astro.cells <- Astro.cells[!(Astro.cells %in% YFP.cells)]
+#Endo.yfp.cells <- intersect(Endo.cells, YFP.cells)
+#Endo.cells <- Endo.cells[!(Endo.cells %in% YFP.cells)]
+#Fibro.yfp.cells <- intersect(Fibro.cells, YFP.cells)
+#Fibro.cells <- Fibro.cells[!(Fibro.cells %in% YFP.cells)]
+#Micro.yfp.cells <- intersect(Micro.cells, YFP.cells)
+#Micro.cells <- Micro.cells[!(Micro.cells %in% YFP.cells)]
+#Neuro.yfp.cells <- intersect(Neuro.cells, YFP.cells)
+#Neuro.cells <- Neuro.cells[!(Neuro.cells %in% YFP.cells)]
+
+s <- list(NodeA.cells,
+          NodeA.yfp.cells,
+          NodeB.cells,
+          NodeB.yfp.cells,
+          NodeC.cells,
+          NodeC.yfp.cells,
+          NodeD.cells,
+          NodeD.yfp.cells,
+          Oligo.cells,
+          Oligo.yfp.cells,
+          Astro.cells,
+          Astro.yfp.cells)
+p <- lapply(s, function(n) length(n))
+dat.raw[, i] <- as.numeric(unlist(p))
+}
+
+dat <- sapply(names(l), function(i) popDat(i))
+rownames(dat) <- classes
+d <- dat[!(rownames(dat) %in% grep("YFP", rownames(dat), value = T)), ]
+# Normalize by total cells by replicate
+d <- apply(d, 2, function(i) i <- i/sum(i))
+n <- data.frame(y = NA, ymin = NA, ymax = NA)
+for(i in rownames(d)){
+  n <- rbind(n, mean_se(d[i, ]))
+}
+n <- n[-1,]
+d <- cbind(d, n)
+d <- as.data.frame(d)
+d$ID <- rownames(d)
+d$yminA <- rep(0, nrow(d))
+d$ymaxA <- rep(0, nrow(d))
+for(r in 1:nrow(d)){
+  d[r, "yminA"] <- sum(d[(r+1):6, "y"]) + d[r, "ymin"]
+}
+for(r in 1:nrow(d)){
+  d[r, "ymaxA"] <- sum(d[(r+1):6, "y"]) + d[r, "ymax"]
+}
+d[6, "ymaxA"] <- d[6, "ymax"]
+d[6, "yminA"] <- d[6, "ymin"]
+d$ID <- factor(d$ID, levels = rownames(d))
+
+
+levels(d$ID)
+p <- list()
+p[[1]] <- ggplot(d, aes(x = "Vehicle", y = y, fill = ID)) +
+           geom_col(position = "fill") +
+  scale_fill_manual(values = c(colors.use[c(12, 13)], 
+                               colors.use[1:4])) +
+            geom_errorbar(data = d, 
+                          aes(ymin = yminA, ymax = ymaxA, width = 0.3),
+                          position = 'dodge')
+#devSVG("Fig.8F_Sox2_StackBar_VehCells.svg")
+p[[1]]
+#dev.off()
+
+#write.xlsx(dat, "Sox2_Yfp_GT_VehCells.xlsx")
+
+Tr <- SetAllIdent(Tr, "Replicate")
+l <- list()
+for(i in levels(Tr@ident)){
+  l[[i]] <- SubsetData(Tr, ident.use = i)
+}
+classes <- c("Astrocytes",
+             "Astrocytes YFP",
+             "Oligodendrocytes",
+             "Oligodendrocytes YFP",
+             "Node A",
+             "Node A YFP",
+             "Node B",
+             "Node B YFP",
+             "Node C",
+             "Node C YFP",
+             "Node D",
+             "Node D YFP")
+dat.raw <- data.frame(MB04 = rep(0, length(classes)),
+                  MB07 = rep(0, length(classes)),
+                  MB09 = rep(0, length(classes)),
+                  MB12 = rep(0, length(classes)),
+                  MB14 = rep(0, length(classes)))
+dat <- sapply(names(l), function(i) popDat(i))
+rownames(dat) <- classes
+d <- dat[!(rownames(dat) %in% grep("YFP", rownames(dat), value = T)), ]
+# Normalize by total cells by replicate
+d <- apply(d, 2, function(i) i <- i/sum(i))
+n <- data.frame(y = NA, ymin = NA, ymax = NA)
+for(i in rownames(d)){
+  n <- rbind(n, mean_se(d[i, ]))
+}
+n <- n[-1,]
+d <- cbind(d, n)
+d <- as.data.frame(d)
+d$ID <- rownames(d)
+d$yminA <- rep(0, nrow(d))
+d$ymaxA <- rep(0, nrow(d))
+for(r in 1:nrow(d)){
+  d[r, "yminA"] <- sum(d[(r+1):6, "y"]) + d[r, "ymin"]
+}
+for(r in 1:nrow(d)){
+  d[r, "ymaxA"] <- sum(d[(r+1):6, "y"]) + d[r, "ymax"]
+}
+d[6, "ymaxA"] <- d[6, "ymax"]
+d[6, "yminA"] <- d[6, "ymin"]
+d$ID <- factor(d$ID, levels = rownames(d))
+
+
+levels(d$ID)
+p <- list()
+p[[1]] <- ggplot(d, aes(x = "Vehicle", y = y, fill = ID)) +
+           geom_col(position = "fill") +
+  scale_fill_manual(values = c(colors.use[c(12, 13)], 
+                               colors.use[1:4])) +
+            geom_errorbar(data = d, 
+                          aes(ymin = yminA, ymax = ymaxA, width = 0.3),
+                          position = 'dodge')
+#devSVG("Fig.8F_Sox2_StackBar_VisCells.svg")
+p[[1]]
+#dev.off()
+
+#write.xlsx(dat, "Sox2_Yfp_GT_VisCells.xlsx")
+```
+
+#Surface Differentiation (Neoantigen)
+```{r}
+source("~/SingleCell.Utilities.R")
+GT <- readRDS("~/GT.rds")
+atlas <- read.xlsx(file = "~/S1_File.xlsx", sheetIndex = 1)
+head(atlas)
+mGenes <- as.character(unique(atlas[grep("MOUSE", atlas$UP_entry_name), "ENTREZ.gene.symbol"]))
+mGenes
+#groups: A/B, A/B/C, A/B/C/D (Veh_only) x w or w/o glia
+#Node A/B w/wo glia
+#✔
+GT <- SetAllIdent(GT, "ID")
+markers <- FindMarkers(GT, ident.1 = c("Node A", "Node B"), test.use = "t", 
+                       min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "AB-_Intersect.xlsx")
+markers1 <- markers
+#Node A/B w/ glia
+#✔
+markers <- FindMarkers(GT, ident.1 = c("Node A", "Node B", "Astrocytes", "Oligodendrocytes"),
+                       test.use = "t", min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "AB+_Intersect.xlsx")
+markers2 <- markers
+#Node A/B/C w/o glia 
+#✔
+markers <- FindMarkers(GT, ident.1 = c("Node A", "Node B", "Node C"), test.use = "t", 
+                       min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "ABC-_Intersect.xlsx")
+markers3 <- markers
+#Node A/B/C w/ glia
+#✔
+markers <- FindMarkers(GT, ident.1 = c("Node A", "Node B", "Node C",
+                                       "Astrocytes", "Oligodendrocytes"),
+                       test.use = "t", min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "ABC+_Intersect.xlsx")
+markers4 <- markers
+#Veh Node A/B/C/D w/o glia
+#✔
+Veh <- SubsetData(GT, subset.name = "Treatment", accept.value = "Vehicle")
+markers <- FindMarkers(Veh, ident.1 = c("Node A", "Node B", "Node C", "Node D"),
+                       test.use = "t", min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "ABCD-_Veh_Intersect.xlsx")
+markers5 <- markers
+#Veh Node A/B/C/D w/ glia
+#✔
+markers <- FindMarkers(Veh, ident.1 = c("Node A", "Node B", "Node C", "Node D",
+                                       "Astrocytes", "Oligodendrocytes"),
+                       test.use = "t", min.diff.pct = 0.1, min.pct = 0, only.pos = T)
+markers <- markers[intersect(rownames(markers), mGenes), ]
+write.xlsx(markers, "ABCD+_Veh_Intersect.xlsx")
+markers6 <- markers
+q()
+xls <- c("AB-_Intersect.xlsx", "ABC-_Intersect.xlsx", "ABCD-_Veh_Intersect.xlsx",
+         "AB+_Intersect.xlsx", "ABC+_Intersect.xlsx", "ABCD+_Veh_Intersect.xlsx")
+g <- character()
+for(xl in xls){
+  g <- c(g, as.character(read.xlsx(paste0(xl), sheetIndex=1)[, 1]))
+}
+g <- unique(g)
+g
+
+for(gene in g){
+pdf(paste0("~/Neoantigens/", gene, ".pdf"))
+print(MultiFeaturePlot(GT, gene))
+dev.off()
+}
+
+
+pdf("Slc29a1.pdf")
+MultiFeaturePlot(GT, "Slc29a1")
+dev.off()
+```
+#Cell Cycle Regression
+```{r}
+# In R 3.6.0
+source("~/SingleCell.Utilities_3.6.R")
+library(Seurat)
+GT <- readRDS("~/GT.rds")
+GT@misc <- NULL
+GT <- UpdateSeuratObject(GT)
+GT@assays$RNA@var.features <- gsub("_", "-", GT@assays$RNA@var.features)
+
+
+ccg <- readLines("CellCycleGenes.txt")
+ccg <- gsub("-", "_", ccg)
+g1s <- list(ccg[1:86])
+s <- ccg[87:172]
+g2m <- ccg[173:252]
+m <- list(ccg[253:336])
+mg1 <- list(ccg[337:381])
+GT <- CellCycleScoring(GT, s.features = s, g2m.features = g2m, 
+                       set.ident = T)
+pdf("GT_PhaseScored.pdf")
+TSNEPlot(GT, cols = colors.use)
+dev.off()
+
+GT <- ScaleData(GT, vars.to.regress = c("nUMI", "S.Score", "G2M.Score"),
+                features = GT@assays$RNA@var.features, verbose = T)
+GT.pca <- TestPCA(GT)
+GT <- RunPCA(GT, npcs = 9, features = GT@assays$RNA@var.features)
+GT <- RunTSNE(GT, dims = 1:9)
+pdf("GT_tSNE_Phase-regressed.pdf")
+TSNEPlot(GT, cols = colors.use)
+dev.off()
+
+Idents(GT) <- GT[["ID"]]
+pdf("GT_tSNE_Phase-regressed_Nodes.pdf")
+TSNEPlot(GT, cols = colors.use)
+dev.off()
+
+genes <- c("Mki67", "Pcna", "Ccnd1", "Ccnd2", "Gli1", "Atoh1", "Barhl1", "Cntn2", "Rbfox3", "Meg3")
+p <- list()
+for(i in 1:10){
+  message(genes[i])
+  p[[i]] <- MultiFeaturePlot(GT, genes[i], colors = colors.use[i], 
+                             pt.size = 1, scale.color = T)
+}
+pdf("GT_tSNE_Phase-regressed_Markers.pdf", width = 20, height = 11.25)
+CombinePlots(plots = p, ncol = 4)
+dev.off()
+x11()
+```
+
+#SCRATCH
+```{r}
+
+source("~/SingleCell.Utilities.R")
+Veh <- readRDS("~/Veh.rds")
+GT <- readRDS("~/GT.rds")
+WT <- readRDS("WT.rds")
+GT@data <- GT@misc
+WT@data <- WT@misc
+Veh <- SubsetData(GT, subset.name = "Treatment", accept.value = "Vehicle")
+Vis <- SubsetData(GT, subset.name = "Treatment", accept.value = "Vismodegib")
+saveRDS(GT@dr$tsne@cell.embeddings, "GT_xy.rds")
+saveRDS(WT@dr$tsne@cell.embeddings, "WT_xy.rds")
+saveRDS(WhichCells(Veh), "Veh_Cells.rds")
+saveRDS(WhichCells(Vis), "Vis_Cells.rds")
+
+genes <- c('Amt', "Gcsh", "Gldc")
+
+grep('Mat', rownames(GT@misc), value = T)
+grep("Cd276", rownames(WT@data), value = T)
+for(gene in genes){
+  pdf(paste0('GT_', gene, '.pdf'))
+  print(MultiFeaturePlot(GT, gene))
+  dev.off()
+  pdf(paste0('WT_', gene, '.pdf'))
+  print(MultiFeaturePlot(WT, gene))
+  dev.off()
+  pdf(paste0('Veh_', gene, '.pdf'))
+  print(MultiFeaturePlot(Veh, gene))
+  dev.off()
+  pdf(paste0('Vis_', gene, '.pdf'))
+  print(MultiFeaturePlot(Vis, gene))
+  dev.off()
+}
+
+
+```

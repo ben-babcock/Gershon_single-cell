@@ -1,7 +1,7 @@
 ---
 title: "Computational Analysis Single cell RNA-seq"
 author: "Ben Babcock"
-date: "03/25/2019"
+date: "10/01/2019"
 output: html_document
 fig_width: 6 
 fig_height: 5 
@@ -11,41 +11,70 @@ message: False
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
+#Kneeplot Cell Identification
+##Generating kneeplots in accordance with the Drop-Seq Analysis Cookbook guidelines
+```{r}
+# Mice = a vector of mouse identifiers
+mice <- paste0("MB", c(4:7, 9:10, 12:15))
+# Create iterable function to generate knee plot figures
+kneeplot <- function(mouse, root, xlim){
+  message('Working on Mouse: ', mouse)
+  rh <- read.table(paste0(root,
+                          mouse, 
+                          "/out/XCTagHistogram.txt"))
+  x <- cumsum(rh$V1)
+  x <- x/max(x)
+  kp <- plot(1:length(x), 
+        x, 
+        type='l', 
+        col="blue", 
+        xlab="cell barcodes sorted by number of reads [descending]",
+        ylab="cumulative fraction of reads", 
+        xlim=c(1, xlim),
+        main=paste0(mouse, " Knee Plot"))
+  return(kp)
+}
+# Create knee plots. The position of the "knee" will inform how many cells to include in the initial expression matrix
+pdf('KneePlots.pdf')
+lapply(mice, function(i) kneeplot(i, '/pine/scr/b/e/benb3/', 10000))
+dev.off()
+```
 #Import Expression Matrix
 ###Format Objects
 ###Add MetaData
 ```{r}
+# Source a few pre-written functions for later (PCA selection, ANOVA testing, etc.)
 source("~/SingleCell.Utilities.R")
-mice <- paste0("B", c(1:8, "9-1", "9-2", 14:15))
+# seurats = an empty list (will contain objects)
 seurats <- list()
-
+# Establish base variables for importing cells. This is to lighten the Seurat object if any very low-read cells were included below the knee. In this sample no cells were excluded from the matrix at this step.
 min.genes <- 10
 min.cells <- 0
+# Function to import expression matrix, generate seurat object and return object with mouse sample ID set as "replicate" identity class
 prep.Seurat <- function(i){
   message('Starting with Sample ', i)
-  df <- fread(paste0('/pine/scr/s/e/seth96/BCL/', i, '/out/dge.txt'),
+  df <- fread(paste0('dgezip/', i, '.dge'),
               stringsAsFactors = F, 
               data.table = F, sep = "\t", header = T)
   rownames(df) <- df$GENE
   df$GENE <- NULL
   colnames(df) <- paste(as.character(i), colnames(df), sep="_")
-  dat <- CreateSeuratObject(counts = df,
+  dat <- CreateSeuratObject(raw.data = df,
                                        min.cells = min.cells,
-                                       min.features = min.genes)
+                                       min.genes = min.genes)
   dat <- StashIdent(object = dat,
                     save.name = "Replicate")
   return(dat)
 }
-
+# Applying the above function to each mouse ID and storing the output Seurats as a list
 seurats <- lapply(mice, function(x) prep.Seurat(x))
 names(seurats) <- mice
-
-BCL <- MergeSeurat(seurats[['B1']], seurats[['B2']])
+# Sequentially merging seurat objects
+GT <- MergeSeurat(seurats[['MB4']], seurats[['MB5']])
 for(mouse in mice[3:length(mice)]){
-  BCL <- MergeSeurat(BCL, seurats[[mouse]])
+  GT <- MergeSeurat(GT, seurats[[mouse]])
 }
-
+# Addint metadata (drug treatment, sex & run date) to the merged object, using mouse ID as a key
 Treatment <- c("Vehicle", "Vehicle", "Vehicle", 
                "Vehicle", "Vehicle",
                "Vismodegib", "Vismodegib", "Vismodegib", 
@@ -64,49 +93,67 @@ GT <- SetAllIdent(object = GT, id = "Replicate")
 GT@ident <- plyr::mapvalues(x = GT@ident, from = mice, to = Date)
 GT <- StashIdent(object = GT, save.name = 'Date')
 GT <- SetAllIdent(object = GT, id = "Replicate")
-```
-#Apply Data Quality Filters
-###(Many are data-set specific, owing to differing depths of sequence by library batch)
-```{r}
+# Gather percent mitochondrial transcripts for each cell (a marker for dying cells) within the Seurat object
 mito.genes <- grep(pattern = "^mt-", x = rownames(GT@data), value = TRUE)
 percent.mito <- (Matrix::colSums(GT@raw.data[mito.genes,])/Matrix::colSums(GT@raw.data))*100
 GT <- AddMetaData(object = GT, metadata = percent.mito, col.name = "percent.mito")
 
+# Outputting initial "unselected" cell metrics.
+# Loosely, the cells in the object are all cells above the knee-plot "knee" by cumulative reads. We want to gather these raw UMI and gene metadata
+df <- data.frame()
+GetCellData <- function(object, ident.use){
+  object <- SetAllIdent(object, ident.use)
+  for(m in levels(object@ident)){
+    ms <- SubsetData(object, ident.use = m)
+    df["nCells", m] <- ncol(ms@data)
+    df[c('min.UMI', 'max.UMI'), m] <- range(ms@meta.data$nUMI)
+    df[c('min.Gene', 'max.Gene'), m]<- range(ms@meta.data$nGene)
+    df[c('min.pct.mito', 'max.pct.mito'), m]<- range(ms@meta.data$percent.mito)
+  }
+  return(df)
+}
+df <- GetCellData(GT, "Replicate")
+write.xlsx(df, "cell-data.xlsx", sheetName = "raw.data", append =T)
+```
+#Apply Data Quality Filters
+###(Many are data-set specific, owing to differing depths of sequence by library batch)
+```{r}
+# Plot metadata features and filter cells on raw thresholds to center cells around the "belly" of the violin plot
 VlnPlot(object = GT, 
         features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3, group.by = "Date")
-
+# Empty Seurats list in preparation for holding filtered objects
 seurats <- list()
 
-seurats[['MB04']] <- FilterCells(object = GT, 
+seurats[['MB4']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
                   high.thresholds = c(2500, 5000, 5),
                   cells.use = WhichCells(GT, subset.name = "Replicate",
-                                         accept.value = "MB04"))
-seurats[['MB05']] <- FilterCells(object = GT, 
+                                         accept.value = "MB4"))
+seurats[['MB5']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
                   high.thresholds = c(2000, 4000, 5),
                   cells.use = WhichCells(GT, subset.name = "Replicate",
-                                         accept.value = "MB05"))
-seurats[['MB06']] <- FilterCells(object = GT, 
+                                         accept.value = "MB5"))
+seurats[['MB6']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
                   high.thresholds = c(3000, 5000, 5),
                   cells.use = WhichCells(GT, subset.name = "Replicate",
-                                         accept.value = "MB06"))
-seurats[['MB07']] <- FilterCells(object = GT, 
+                                         accept.value = "MB6"))
+seurats[['MB7']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
                   high.thresholds = c(2200, 4000, 5),
                   cells.use = WhichCells(GT, subset.name = "Replicate",
-                                         accept.value = "MB07"))
-seurats[['MB09']] <- FilterCells(object = GT, 
+                                         accept.value = "MB7"))
+seurats[['MB9']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
                   high.thresholds = c(4000, 7500, 5),
                   cells.use = WhichCells(GT, subset.name = "Replicate",
-                                         accept.value = "MB09"))
+                                         accept.value = "MB9"))
 seurats[['MB10']] <- FilterCells(object = GT, 
                   subset.names = c("nGene", "nUMI", "percent.mito"), 
                   low.thresholds = c(500, 200, -Inf), 
@@ -142,34 +189,41 @@ GT <- MergeSeurat(seurats[[mice[1]]], seurats[[mice[2]]])
 for(mouse in mice[3:length(mice)]){
   GT <- MergeSeurat(GT, seurats[[mouse]])
 }
-
+# Visualizing the distributions once more, following selection
 VlnPlot(object = GT,group.by = "Date", features.plot = c("nGene", "nUMI", "percent.mito"), nCol = 3)
+
+# Outputting the "filtered" cell metrics.
+# Loosely, the cells in the object are all cells above the knee-plot "knee", with visual outliers of the violin plots removed to center the "belly" of the violin plot more appropriately
+df <- data.frame()
+df <- GetCellData(GT, "Replicate")
+write.xlsx(df, "cell-data.xlsx", sheetName = "filter.data", append =T)
+
 ```
 #Investigate Large Data Set by tSNE & Clusters
 
 ```{r}
-# Data scaling is better done with the maximum number of cells - we keep all cells here.
-# Treatment-specific analyses will be performed following the text workflow following.
-#Save all raw data prior to filtering genes by number of cells detected
+# Data scaling is better done with the maximum number of cells - we include all samples for scaling regardless of treatment status to achieve better results and to ensure both treatmen classes are scaled identically.
+# Cells were filtered above, now we filter genes. First we save the original, unfiltered matrix to the "misc" slot of the Seurat object
 GT@misc <- GT@raw.data
-#Filter genes by minimum number of cells with that transcript detected
+# Filter genes to only those expressed in more than 30 cells to prevent extreme low-abundance genes (found in less than 0.1% of the sample) from influencing data scaling
 GT@raw.data  <- GT@raw.data[rowSums(GT@raw.data != 0) >= 30, ]
-#Follow Seurat HVG selection
+# Follow Seurat Highly Variable Genes selection
 GT <- NormalizeData(GT)
 GT <- FindVariableGenes(GT, x.low.cutoff = 0.0125, 
                         x.high.cutoff = 3, 
                         y.cutoff = 0.5, 
                         y.high.cutoff = Inf, 
-                        num.bin = 20)
-#Apply linear scaling & centering to data
+                        num.bin = 20, do.plot = F)
+# Apply linear scaling & centering to data
 GT <- ScaleData(GT, vars.to.regress = 'nUMI')
 ```
 ###Seurat Workflow
 ```{r}
-#Predict the number of significant PCs (Z-score variance > 2)
+# Predict the number of significant PCs (Z-score percent of total variance > 2)
 GT.pca <- TestPCA(GT, do.return = T)
+# Compute PCs
 GT <- RunPCA(GT, pcs.compute = 60, seed.use = 42, weight.by.var = T, rev.pca = F, use.imputed = F)
-#Find cluster populations & tSNE coordinates for visualization
+# Find cluster populations & tSNE coordinates for visualization using the predicted number of PCs
 GT <- FindClusters(GT, dims.use = 1:10, resolution = 1, 
                    k.param = 30, random.seed = 0)
 GT <- StashIdent(GT, "GTClust")
@@ -178,7 +232,7 @@ for(ident in c("Treatment", "Sex", "Date", "GTClust")){
   GT <- SetAllIdent(GT, ident)
   TSNEPlot(GT, plot.title = ident)
 }
-
+# Find differentially expressed gene markers for each cluster and write them to an excel file for manual analysis
 writeMarkers <- function(object, ident, file.path){
   message('Finding Markers of ', ident)
   markers <- FindMarkers(object, ident.1 = ident)
@@ -186,7 +240,7 @@ writeMarkers <- function(object, ident, file.path){
   write.xlsx(markers, file.path, sheetName = paste0("Clust_", ident), append = T)
 }
 
-#lapply(0:17, function(i) writeMarkers(GT, i, "MB_Markers.xlsx"))
+lapply(0:17, function(i) writeMarkers(GT, i, "MB_Markers.xlsx"))
 ```
 ###Filter out doublet clusters
 ```{r}
@@ -195,19 +249,23 @@ writeMarkers <- function(object, ident, file.path){
 GT <- SetAllIdent(GT, "GTClust")
 TSNEPlot(GT, colors.use = colors.use)
 #Theses steps must be done interactively
-#to.remove <- TSNEPlot(GT, do.identify = T, 
-#                     cells.use = WhichCells(GT, subset.name = "GTClust", 
-#                                            accept.value = 11))
+to.remove <- TSNEPlot(GT, do.identify = T, 
+                     cells.use = WhichCells(GT, subset.name = "GTClust", 
+                                            accept.value = 11))
 
-#to.remove <- c(to.remove, WhichCells(GT, 
-#                                     subset.name = "GTClust", 
-#                                     accept.value = 17))
-#to.keep <- WhichCells(GT)[!(WhichCells(GT) %in% to.remove)]
+to.remove <- c(to.remove, WhichCells(GT, 
+                                     subset.name = "GTClust", 
+                                     accept.value = 17))
+to.keep <- WhichCells(GT)[!(WhichCells(GT) %in% to.remove)]
 GT2 <- readRDS("GT.rds")
 GT <- SubsetData(GT, cells.use = WhichCells(GT2))
 rm(GT2)
 TSNEPlot(GT, colors.use = colors.use)
 saveRDS(GT, "GT.rds")
+
+df <- data.frame()
+df <- GetCellData(GT, "Replicate")
+write.xlsx(df, "cell-data.xlsx", sheetName = "selected.data", append =T)
 ```
 
 #Begin characterizing Vehicle-only replicates
@@ -282,39 +340,22 @@ saveRDS(Veh, 'Veh.rds')
 #Introduce Wild Type Cerebellum (at age P7)
 ###Preprocessing
 ```{r}
-mice <- paste0("WT", c("01", "02", "03", "04", "05"))
-
+# Mice = a vector of mouse identifiers
+mice <- paste0("WT", 1:5)
+# seurats = an empty list (will contain objects)
 seurats <- list()
+# Establish base variables for importing cells. This is to lighten the Seurat object if any very low-read cells were included below the knee. In this sample no cells were excluded from the matrix at this step.
 min.genes <- 300
 min.cells <- 0
-prep.Seurat <- function(i){
-  message('Starting with Sample ', i)
-  df <- fread(paste0('../DGEs/', i, '.dge'),
-              stringsAsFactors = F, data.table = F, 
-              sep = "\t", header = T)
-  rownames(df) <- df$GENE
-  df$GENE <- NULL
-  colnames(df) <- paste(as.character(i), colnames(df), sep="_")
-  dat <- CreateSeuratObject(raw.data = df,
-                                       min.cells = min.cells,
-                                       min.genes = min.genes)
-  dat <- StashIdent(object = dat,
-                    save.name = "Replicate")
-  return(dat)
-}
-
+# Re-run the prep.seurat function we used when importing the tumor expression matrices
 seurats <- lapply(mice[1:5], function(x) prep.Seurat(x))
 names(seurats) <- mice[1:5]
-
-WT <- MergeSeurat(seurats[['WT01']], seurats[['WT02']])
+# Iteratively merge sample-specific seurats into a single object
+WT <- MergeSeurat(seurats[[mice[1]]], seurats[[mice[2]]])
 for(mouse in mice[3:5]){
   WT <- MergeSeurat(WT, seurats[[mouse]])
 }
-
-WT@misc <- WT@raw.data
-```
-###Initial Filtering
-```{r}
+# Add Mitochondrial percentage as metadata. Same as with tumor samples.
 mito.genes <- grep(pattern = "^mt-", 
                    x = rownames(WT@raw.data), 
                    value = T)
@@ -323,8 +364,19 @@ percent.mito <- (Matrix::colSums(WT@raw.data[mito.genes, ])
 WT <- AddMetaData(object = WT, 
                   metadata = percent.mito, 
                   col.name = "percent.mito")
-VlnPlot(WT, c("nUMI", "nGene", "percent.mito"), group.by = "Replicate")
+# Stash un-trimmed data prior to cell and gene selection
+WT@misc <- WT@raw.data
+# Get Cell metrics for threshold reporting.
+df <- data.frame()
 
+df <- GetCellData(WT, "Replicate")
+write.xlsx(df, "wt-cell-data.xlsx", sheetName = "raw.data", append =T)
+```
+###Initial Filtering
+```{r}
+# Check violin plot of pre-filtered cells
+VlnPlot(WT, c("nUMI", "nGene", "percent.mito"), group.by = "Replicate")
+# Subset off initial outliers. The WT data set is sequenced to a higher depth and is more consistent sample-to-sample than the GT data set was. We will employ a *slightly* different but more appropriate filtering method. We first remove the upper and lower end of what we would believe to be a cell. Then we establish upper thresholds 4 (or 5 in the case of mitos) standard deviations above the median.
 WT <- SubsetData(WT, 
                  subset.name = 'nUMI', 
                  accept.high = 30000,
@@ -332,8 +384,8 @@ WT <- SubsetData(WT,
 
 max.UMI <- 4*sd(WT@meta.data$nUMI) + median(WT@meta.data$nUMI)
 max.Gene <- 4*sd(WT@meta.data$nGene) + median(WT@meta.data$nGene)
-max.mito <- sd(WT@meta.data$percent.mito)*5 + median(WT@meta.data$percent.mito)
-
+max.mito <- 5*sd(WT@meta.data$percent.mito) + median(WT@meta.data$percent.mito)
+# Subsetting on our upper thresholds. 500 genes & 600 UMIs is about the lower limit of what a cell must contain to be informative to us.
 WT <- SubsetData(WT, 
                  subset.name = 'nGene', 
                  accept.high = max.Gene,
@@ -350,6 +402,10 @@ WT@raw.data <- WT@raw.data[, WhichCells(WT)]
 VlnPlot(WT, c("nUMI", "nGene", "percent.mito"), group.by = "Replicate")
 
 WT <- NormalizeData(WT)
+df <- data.frame()
+
+df <- GetCellData(WT, "Replicate")
+write.xlsx(df, "wt-cell-data.xlsx", sheetName = "filter.data", append =T)
 saveRDS(WT, 'CGNPs.raw.rds')
 ```
 ###Seurat workflow
@@ -416,10 +472,13 @@ thresh <- c(3, 2, 1, 2, 2, 1)
 names(thresh) <- genes
 colors2 <- c(brewer.pal(10,'Paired')[c(9,1,3,5,7)], "red")
 
-#devSVG("Fig.3C_WT_CGNP_markers.svg")
 MultiFeaturePlot(WT, gene.list = genes, colors = colors2, threshold = thresh, pt.size = 1, null.color = "#DBDBDB")
-#dev.off()
+
 saveRDS(WT, "WT.rds")
+
+df <- GetCellData(WT, "Replicate")
+write.xlsx(df, "wt-cell-data.xlsx", sheetName = "subset.data", append =T)
+
 ```
 #Projection of Vehicle Cells into WT tSNE
 ```{r}

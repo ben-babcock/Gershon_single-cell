@@ -1,5 +1,5 @@
-# Babcock_single-cell
-The analysis workflow is presented here in support of the author's manuscript "Single cell RNA-seq shows cellular heterogeneity and lineage expansion in a mouse model of SHH-driven medulloblastoma support resistance to SHH inhibitor therapy" 
+# Gerson_single-cell
+The analysis workflow is presented here in support of Babcock & Ocasio, et al. manuscript "Single cell RNA-seq shows cellular heterogeneity and lineage expansion in a mouse model of SHH-driven medulloblastoma support resistance to SHH inhibitor therapy" 
 
 The complete analysis workflow used in this manuscript has been made available as an R notebook and included within this repository.
 Instructions for complete reproduction of the figures and data presented in the author's manuscript may be found within.
